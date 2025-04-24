@@ -8,16 +8,18 @@ import os
 import cv2
 from tensorflow.keras import layers, Model
 from tensorflow.keras.models import load_model
+from django.views.decorators.csrf import csrf_exempt
 
 
 # Create your views here.
 def index(request):
     return render(request, 'index.html')
 
-
 def LogAction(request):
-    uname = request.POST['username']
-    pwd = request.POST['password']
+    # uname = request.POST['username']
+    # pwd = request.POST['password']
+    uname = request.POST.get('username', '')
+    pwd = request.POST.get('password', '')
     if uname == 'Encoder' and pwd == 'Encoder':
         return render(request, 'AdminHome.html')
     else:
@@ -113,112 +115,126 @@ from django.core.mail import EmailMessage
 
 global filename, uploaded_file_url,decoder
 def EncodeAction(request):
-    global filename, uploaded_file_url,decoder
+    global filename, uploaded_file_url, decoder
     decoded_text = 'null'
     if request.method == 'POST' and request.FILES['file']:
         myfile = request.FILES['file']
         message = request.POST['message']
-        email=request.POST['email']
+        email = request.POST.get('email', '')
         if len(message) == 20:
             fs = FileSystemStorage()
             location = myfile.name
             filename = fs.save(myfile.name, myfile)
             uploaded_file_url = fs.url(filename)
+            
+            # Get the absolute path to the uploaded file using Django's storage
+            file_path = fs.path(filename)  # This gives you the actual file path
+            
+            # Print paths for debugging
             BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            imagedisplay = cv2.imread(BASE_DIR + "/" + uploaded_file_url)
+            print(f"BASE_DIR: {BASE_DIR}")
+            print(f"uploaded_file_url: {uploaded_file_url}")
+            print(f"File Path: {file_path}")
+            
+            # Try to read the image with cv2 directly from file_path
+            imagedisplay = cv2.imread(file_path)
+            if imagedisplay is None:
+                print(f"Failed to read image with OpenCV from {file_path}")
+            
+            # Load image using Keras utilities with the proper file path
+            try:
+                img = image.load_img(file_path, target_size=(32, 32))
+                img_array = image.img_to_array(img)
+                img_array = img_array / 255.0
+                # Display the image
+                plt.imshow(img_array)
+                plt.title('Uploaded Image')
+                plt.show()
+                plt.close()
 
-            # Load an image from your system (ensure the path is correct)
-            # image_path = myfile  # Replace with the actual path to your image
-            img = image.load_img(BASE_DIR + "/" + uploaded_file_url, target_size=(32, 32))  # Resize to 128x128
-            img_array = image.img_to_array(img)  # Convert image to numpy array
+                print("Image Shape:", img_array.shape)
 
-            # Normalize the image to [0, 1]
-            img_array = img_array / 255.0
+                # Example secret text and text length
+                secret_text = message
+                text_length = 20  # Maximum length of the secret text
+                encoded_text = text_to_one_hot(secret_text, char_to_index, text_length)
 
-            # Display the image
-            plt.imshow(img_array)
-            plt.title('Uploaded Image')
-            plt.show()
-            plt.close()
+                print("Encoded Text Shape:", encoded_text.shape)
 
-            print("Image Shape:", img_array.shape)
+                # Define input image shape
+                input_image_shape = (32, 32, 3)
 
-            # Example secret text and text length
-            secret_text = message
-            text_length = 20  # Maximum length of the secret text
-            encoded_text = text_to_one_hot(secret_text, char_to_index, text_length)
+                # Build encoder and decoder
+                encoder = build_encoder(input_image_shape, text_length, len(char_to_index))
+                decoder = build_decoder(input_image_shape, text_length, len(char_to_index))
 
-            print("Encoded Text Shape:", encoded_text.shape)
+                # Define the full model (encoder + decoder)
+                encoded_image = encoder.output
+                decoded_text = decoder(encoded_image)
 
-            # Define input image shape
-            input_image_shape = (32, 32, 3)
+                full_model = Model(inputs=[encoder.input[0], encoder.input[1]], outputs=decoded_text)
+                full_model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
 
-            # Build encoder and decoder
-            encoder = build_encoder(input_image_shape, text_length, len(char_to_index))
-            decoder = build_decoder(input_image_shape, text_length, len(char_to_index))
+                full_model.summary()
 
-            # Define the full model (encoder + decoder)
-            encoded_image = encoder.output
-            decoded_text = decoder(encoded_image)
+                # Prepare the image and text for training
+                train_images = np.expand_dims(img_array, axis=0)  # Add batch dimension
+                train_texts = np.expand_dims(encoded_text, axis=0)  # Add batch dimension
 
-            full_model = Model(inputs=[encoder.input[0], encoder.input[1]], outputs=decoded_text)
-            full_model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+                # Train the full model
+                full_model.fit([train_images, train_texts], train_texts, epochs=25, batch_size=1)
 
-            full_model.summary()
+                # Save the model for future use
+                full_model.save('encoder_decoder_model.h5')
 
-            # Prepare the image and text for training
-            train_images = np.expand_dims(img_array, axis=0)  # Add batch dimension
-            train_texts = np.expand_dims(encoded_text, axis=0)  # Add batch dimension
+                # Test the model with a new image and secret text
+                test_image = np.expand_dims(img_array, axis=0)  # Use the same test image
+                test_text = np.expand_dims(encoded_text, axis=0)  # Use the same secret text
 
-            # Train the full model
-            full_model.fit([train_images, train_texts], train_texts, epochs=25, batch_size=1)
+                # Encode the secret text into the image
+                encoded_test_image = encoder.predict([test_image, test_text])
 
-            # Save the model for future use
-            full_model.save('encoder_decoder_model.h5')
-
-            # Test the model with a new image and secret text
-            test_image = np.expand_dims(img_array, axis=0)  # Use the same test image
-            test_text = np.expand_dims(encoded_text, axis=0)  # Use the same secret text
-
-            # Encode the secret text into the image
-            encoded_test_image = encoder.predict([test_image, test_text])
-
-            # Remove the batch dimension by squeezing it (assuming only one image in the batch)
-            img_single = encoded_test_image[0]  # Or use img_array.squeeze() if you want to squeeze all dimensions
-            stegano_path = r'C:\Image_Steganography\Encoded'
-            os.makedirs(stegano_path, exist_ok=True)
-            # Save the steganography image to a file
-            steganography_image_path = os.path.join(stegano_path, 'Stegano_image.png')
+                # Remove the batch dimension by squeezing it (assuming only one image in the batch)
+                img_single = encoded_test_image[0]  # Or use img_array.squeeze() if you want to squeeze all dimensions
+                stegano_path = r'C:\Image_Steganography\Encoded'
+                os.makedirs(stegano_path, exist_ok=True)
+                # Save the steganography image to a file
+                steganography_image_path = os.path.join(stegano_path, 'Stegano_image.png')
 
 
-            # Display the image
-            plt.imshow(img_single)  # img_single will have shape (32, 32, 3)
-            plt.title('Steganography Image')
-            plt.axis('off')  # Hide axis for clarity
-            plt.savefig(steganography_image_path, bbox_inches='tight', pad_inches=0)
-            # # plt.show()
-            # # plt.close()
-            print(f"Steganography image saved at {steganography_image_path}")
+                # Display the image
+                plt.imshow(img_single)  # img_single will have shape (32, 32, 3)
+                plt.title('Steganography Image')
+                plt.axis('off')  # Hide axis for clarity
+                plt.savefig(steganography_image_path, bbox_inches='tight', pad_inches=0)
+                # # plt.show()
+                # # plt.close()
+                print(f"Steganography image saved at {steganography_image_path}")
 
-            #Mail Authentication
-            subject = 'Steganography Image'
-            message = 'Please find the steganography image attached. Decode it to extract the hidden message.'
-            from_email = 'streamwaytechprojects@gmail.com'  # Replace with your email
-            to_email = email  # Decoder's email address
+                #Mail Authentication
+                subject = 'Steganography Image'
+                message = 'Please find the steganography image attached. Decode it to extract the hidden message.'
+                from_email = 'streamwaytechprojects@gmail.com'  # Replace with your email
+                to_email = email  # Decoder's email address
 
-            # Create an EmailMessage object
-            email_message = EmailMessage(subject, message, from_email, [to_email])
-            # Attach the image
-            email_message.attach_file(steganography_image_path)
-            # Send the email
-            email_message.send()
-            print(f"Image sent to {email}")
+                # Create an EmailMessage object
+                email_message = EmailMessage(subject, message, from_email, [to_email])
+                # Attach the image
+                email_message.attach_file(steganography_image_path)
+                # Send the email
+                email_message.send()
+                print(f"Image sent to {email}")
 
-            context = {'data': "Steganography Image Successfully Sent to Mail..!!"}
-            return render(request, 'Decode.html', context)
-        else:
-            context = {'data': "Message Length Must Be 20 Characters"}
-            return render(request, 'Encode.html', context)
+                context = {'data': "Steganography Image Successfully Sent to Mail..!!"}
+                return render(request, 'Decode.html', context)
+            # else:
+            #     context = {'data': "Message Length Must Be 20 Characters"}
+            #     return render(request, 'Encode.html', context)
+        
+            except Exception as e:
+                    print(f"Error loading image: {str(e)}")
+                    context = {'data': f"Error loading image: {str(e)}"}
+                    return render(request, 'Encode.html', context)
 
 
 def Decoder(request):
@@ -273,45 +289,68 @@ def Upload(request):
 
 
 def DecodeAction(request):
-    global decoder
     if request.method=='POST':
         stegno=request.FILES['file']
-
+        
         fs = FileSystemStorage()
         filename = fs.save(stegno.name, stegno)
         uploaded_image_url = fs.url(filename)
-
+        
         BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         img_path = BASE_DIR + uploaded_image_url
-        img = image.load_img(img_path, target_size=(32, 32))  # Resize to 32x32 if needed
+        img = image.load_img(img_path, target_size=(32, 32))
         img_array = image.img_to_array(img)
-        img_array = img_array / 255.0  # Normalize the image
-
-        # Load the full model that contains both encoder and decoder
-        full_model = load_model('encoder_decoder_model.h5')
-
-        # Prepare the image for the full model's prediction
-        encoded_image = np.expand_dims(img_array, axis=0)  # Add batch dimension
-
-        # Create a dummy one-hot encoded text input, matching the text length and vocab size
-        text_length = 20  # Same as in your encoding part
-        vocab_size = len(char_to_index)  # Number of characters in the vocab (62 in your case)
-        dummy_text = np.zeros((1, text_length, vocab_size))  # Dummy input with zeros for text
-
-        # Use the full model to predict the decoded text
+        img_array = img_array / 255.0
+        
+        # Recreate the model architecture
+        input_image_shape = (32, 32, 3)
+        text_length = 20
+        vocab_size = len(char_to_index)
+        
+        # Build encoder and decoder
+        encoder = build_encoder(input_image_shape, text_length, vocab_size)
+        decoder = build_decoder(input_image_shape, text_length, vocab_size)
+        
+        # Define the full model (encoder + decoder)
+        encoded_image = encoder.output
+        decoded_text = decoder(encoded_image)
+        
+        full_model = Model(inputs=[encoder.input[0], encoder.input[1]], outputs=decoded_text)
+        full_model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+        
+        # Try to load weights only (not the full model)
+        try:
+            # This attempts to load weights only, not the architecture
+            full_model.load_weights('encoder_decoder_model.h5')
+        except:
+            try:
+                # If direct loading fails, try loading layer by layer
+                temp_model = tf.keras.models.load_model('encoder_decoder_model.h5', compile=False)
+                
+                # Transfer weights manually
+                for i, layer in enumerate(full_model.layers):
+                    try:
+                        layer.set_weights(temp_model.layers[i].get_weights())
+                    except:
+                        print(f"Could not transfer weights for layer {i}")
+            except Exception as e:
+                print(f"Error loading model: {str(e)}")
+                context = {'data': "Error: Could not load the model. Please encode an image first."}
+                return render(request, 'Decode.html', context)
+        
+        # Rest of your function remains the same
+        encoded_image = np.expand_dims(img_array, axis=0)
+        dummy_text = np.zeros((1, text_length, vocab_size))
+        
         decoded_text_from_image = full_model.predict([encoded_image, dummy_text])
-
-        # Convert the decoded output (one-hot encoding) back to text
-        decoded_text_from_image = np.argmax(decoded_text_from_image, axis=-1)  # Get the indices
+        decoded_text_from_image = np.argmax(decoded_text_from_image, axis=-1)
         decoded_text = ''.join([index_to_char[idx] for idx in decoded_text_from_image[0]])
-
+        
         print("Decoded Text:", decoded_text)
-
+        
         context = {'data': decoded_text}
         return render(request, 'Decoded.html', context)
-
+    
     else:
         context = {'data': "No image uploaded for decoding"}
         return render(request, 'Decode.html', context)
-
-
