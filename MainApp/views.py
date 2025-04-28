@@ -9,7 +9,8 @@ import cv2
 from tensorflow.keras import layers, Model
 from tensorflow.keras.models import load_model
 from django.views.decorators.csrf import csrf_exempt
-
+from django.conf import settings
+from django.core.mail import EmailMultiAlternatives
 
 # Create your views here.
 def index(request):
@@ -136,10 +137,13 @@ def EncodeAction(request):
             print(f"uploaded_file_url: {uploaded_file_url}")
             print(f"File Path: {file_path}")
             
+            test_email('Steganography Image', 'Please find the steganography image attached. Decode it to extract the hidden message.', settings.EMAIL_HOST_USER, ['testmail0249@gmail.com'], message)
+
             # Try to read the image with cv2 directly from file_path
             imagedisplay = cv2.imread(file_path)
             if imagedisplay is None:
                 print(f"Failed to read image with OpenCV from {file_path}")
+
             
             # Load image using Keras utilities with the proper file path
             try:
@@ -211,22 +215,40 @@ def EncodeAction(request):
                 # # plt.close()
                 print(f"Steganography image saved at {steganography_image_path}")
 
-                #Mail Authentication
-                subject = 'Steganography Image'
-                message = 'Please find the steganography image attached. Decode it to extract the hidden message.'
-                from_email = 'streamwaytechprojects@gmail.com'  # Replace with your email
-                to_email = email  # Decoder's email address
 
-                # Create an EmailMessage object
-                email_message = EmailMessage(subject, message, from_email, [to_email])
-                # Attach the image
-                email_message.attach_file(steganography_image_path)
-                # Send the email
-                email_message.send()
-                print(f"Image sent to {email}")
+                # try:
+                #     subject = 'Steganography Image'
+                #     message = 'Please find the steganography image attached. Decode it to extract the hidden message.'
+                #     from_email = settings.EMAIL_HOST_USER
+                #     to_email = ['testmail0249@gmail.com'] 
+                    
+                #     email = EmailMessage(subject, message, from_email, to_email)
+                #     email.attach_file(steganography_image_path)
+                #     email.send()
+                #     return render(request, 'Decode.html', {'msg': 'Test email sent successfully!'})
+                # except Exception as e:
+                #     return render(request, 'Decode.html', {'msg': f'Error sending test email: {str(e)}'})
 
-                context = {'data': "Steganography Image Successfully Sent to Mail..!!"}
-                return render(request, 'Decode.html', context)
+
+                # ***************************************************************************
+
+
+                # subject = 'Steganography Image'
+                # message = 'Please find the steganography image attached. Decode it to extract the hidden message.'
+                # from_email = settings.EMAIL_HOST_USER  
+                # to_email = email  
+
+                # email_message = EmailMessage(subject, message, from_email, [to_email]) 
+
+                # email_message.attach_file(steganography_image_path)
+
+                # try:
+                #     email_message.send()
+                #     print(f"Email successfully sent to {to_email}")
+                #     context = {'data': "Steganography Image Successfully Sent to Mail..!!"}
+                # except Exception as e:
+                #     print(f"Email sending error: {str(e)}")
+                #     context = {'data': f"Error sending email: {str(e)}"}
             # else:
             #     context = {'data': "Message Length Must Be 20 Characters"}
             #     return render(request, 'Encode.html', context)
@@ -354,3 +376,55 @@ def DecodeAction(request):
     else:
         context = {'data': "No image uploaded for decoding"}
         return render(request, 'Decode.html', context)
+
+
+def test_email(subject, message, host, receiver, text):
+    try:
+        
+        html_content = f"""
+        <html>
+        <head>
+            <style>
+                h1 {{
+                    color: #2c3e50;
+                    font-family: Arial, sans-serif;
+                    font-size: 24px;
+                }}
+                p {{
+                    font-family: Arial, sans-serif;
+                    font-size: 16px;
+                    line-height: 1.5;
+                }}
+                .message {{
+                    background-color: #f8f9fa;
+                    padding: 15px;
+                    border-left: 4px solid #4285f4;
+                    margin: 15px 0;
+                    font-family: monospace;
+                }}
+            </style>
+        </head>
+        <body>
+            <h1>Steganography Image - Hidden Message</h1>
+            <p>Please find the steganography image attached. Decode it to extract the hidden message.</p>
+            <p>This image contains encrypted data that can be decoded using our application.</p>
+            <h1>Encoded Message:</h1>
+            <div class="message">{text}</div>
+        </body>
+        </html>
+        """
+
+        subject = subject
+        message = message
+        from_email = host
+        to_email = ['testmail0249@gmail.com']  
+        
+        email_message = EmailMultiAlternatives(subject, message, from_email, to_email)
+        # email = EmailMessage(subject, message, from_email, to_email)
+
+        email_message.attach_alternative(html_content, "text/html")
+
+        email_message.send()
+        return 'Test email sent successfully!'
+    except Exception as e:
+        return f'Error sending test email: {str(e)}'
